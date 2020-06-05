@@ -15,6 +15,7 @@
 package com.google.firebase.crashlytics.internal.analytics;
 
 import android.os.Bundle;
+import android.util.Log;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import com.google.firebase.crashlytics.internal.Logger;
@@ -28,7 +29,7 @@ import java.util.concurrent.TimeUnit;
  */
 public class BlockingAnalyticsEventLogger implements AnalyticsEventReceiver, AnalyticsEventLogger {
 
-  private static final String APP_EXCEPTION_EVENT_NAME = "_ae";
+  static final String APP_EXCEPTION_EVENT_NAME = "_ae";
 
   private final CrashlyticsOriginAnalyticsEventLogger baseAnalyticsEventLogger;
   private final int timeout;
@@ -37,6 +38,7 @@ public class BlockingAnalyticsEventLogger implements AnalyticsEventReceiver, Ana
   private final Object latchLock = new Object();
 
   private CountDownLatch eventLatch;
+  private boolean callbackReceived = false;
 
   public BlockingAnalyticsEventLogger(
       @NonNull CrashlyticsOriginAnalyticsEventLogger baseAnalyticsEventLogger,
@@ -50,14 +52,19 @@ public class BlockingAnalyticsEventLogger implements AnalyticsEventReceiver, Ana
   @Override
   public void logEvent(@NonNull String name, @Nullable Bundle params) {
     synchronized (latchLock) {
+      Log.d("WILLIS", "ABOUT TO LOG EVENT");
       Logger.getLogger().d("Logging Crashlytics event to Firebase");
       this.eventLatch = new CountDownLatch(1);
+      this.callbackReceived = false;
 
       baseAnalyticsEventLogger.logEvent(name, params);
 
       Logger.getLogger().d("Awaiting app exception callback from FA...");
       try {
+        Log.d("WILLIS", "ABOUT TO AWAIT" + eventLatch);
         if (eventLatch.await(timeout, timeUnit)) {
+          Log.d("WILLIS", "CALLBACK RECEIVED");
+          callbackReceived = true;
           Logger.getLogger().d("App exception callback received from FA listener.");
         } else {
           Logger.getLogger()
@@ -71,16 +78,27 @@ public class BlockingAnalyticsEventLogger implements AnalyticsEventReceiver, Ana
     }
   }
 
+  /** Must be called on a different thread than logEvent. */
   @Override
   public void onEvent(@NonNull String name, @NonNull Bundle params) {
+    Log.d("WILLIS", "ABOUT TO CHECK THE LATCH");
     final CountDownLatch eventLatch = this.eventLatch;
 
+    Log.d("WILLIS", "ON EVENT CALLED");
+
     if (eventLatch == null) {
+      Log.d("WILLIS", "NO EVENT LATCH");
       return;
     }
+
+    Log.d("WILLIS", "ABOUT TO COUNT DOWN " + eventLatch);
 
     if (APP_EXCEPTION_EVENT_NAME.equals(name)) {
       eventLatch.countDown();
     }
+  }
+
+  boolean isCallbackReceived() {
+    return callbackReceived;
   }
 }
